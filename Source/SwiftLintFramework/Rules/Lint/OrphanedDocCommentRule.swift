@@ -55,6 +55,23 @@ public struct OrphanedDocCommentRule: ConfigurationProviderRule {
             return token.kind == .docComment || token.kind == .docCommentField
         }
 
+      file.structureDictionary.traverseDepthFirst { dictionary -> [SourceKittenDictionary]? in
+        print(dictionary.kind)
+        print()
+        return [dictionary]
+      }
+
+      let functions = file.structureDictionary.traverseDepthFirst { dictionary -> [ByteRange]? in
+        guard
+          dictionary.declarationKind == .functionFree,
+          let offset = dictionary.offset, let length = dictionary.length
+        else {
+          return nil
+        }
+
+        return [ByteRange(location: offset, length: length)]
+      }.sorted { $0.location < $1.location }
+
         let docummentedDeclsRanges = file.structureDictionary.traverseDepthFirst { dictionary -> [ByteRange]? in
             guard let docOffset = dictionary.docOffset, let docLength = dictionary.docLength else {
                 return nil

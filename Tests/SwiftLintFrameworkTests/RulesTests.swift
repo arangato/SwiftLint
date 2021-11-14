@@ -24,4 +24,8 @@ class RulesTests: XCTestCase {
     func testOrphanedDocComment() {
         verifyRule(OrphanedDocCommentRule.description, commentDoesntViolate: false, skipCommentTests: true)
     }
+
+    func testStructuredFunctionDoc() {
+        verifyRule(StructuredFunctionDocRule.description, commentDoesntViolate: false, skipCommentTests: true)
+    }
 }

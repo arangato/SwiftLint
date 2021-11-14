@@ -1466,7 +1466,8 @@ extension RulesTests {
         ("testMark", testMark),
         ("testRequiredEnumCase", testRequiredEnumCase),
         ("testTrailingNewline", testTrailingNewline),
-        ("testOrphanedDocComment", testOrphanedDocComment)
+        ("testOrphanedDocComment", testOrphanedDocComment),
+        ("testStructuredFunctionDoc", testStructuredFunctionDoc)
     ]
 }
 
@@ -1535,6 +1536,12 @@ extension StringExtensionTests {
 
 extension StrongIBOutletRuleTests {
     static var allTests: [(String, (StrongIBOutletRuleTests) -> () throws -> Void)] = [
+        ("testWithDefaultConfiguration", testWithDefaultConfiguration)
+    ]
+}
+
+extension StructuredFunctionDocRuleTests {
+    static var allTests: [(String, (StructuredFunctionDocRuleTests) -> () throws -> Void)] = [
         ("testWithDefaultConfiguration", testWithDefaultConfiguration)
     ]
 }
@@ -2024,6 +2031,7 @@ XCTMain([
     testCase(StrictFilePrivateRuleTests.allTests),
     testCase(StringExtensionTests.allTests),
     testCase(StrongIBOutletRuleTests.allTests),
+    testCase(StructuredFunctionDocRuleTests.allTests),
     testCase(SwiftVersionTests.allTests),
     testCase(SwitchCaseAlignmentRuleTests.allTests),
     testCase(SwitchCaseOnNewlineRuleTests.allTests),
