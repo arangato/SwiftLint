@@ -1,4 +1,5 @@
 import Foundation
+import MarkdownKit
 import SourceKittenFramework
 
 public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProviderRule, AutomaticTestableRule {
@@ -11,48 +12,18 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         name: "Structured Function Doc",
         description:
             "Function documentation should have 1 line of summary, followed by an empty line and " +
-            "detailing all parameters using markdown.",
+        "detailing all parameters using markdown.",
         kind: .lint,
         minSwiftVersion: .fourDotOne,
-        nonTriggeringExamples: [
-            Example("""
-            /// My great function.
-            func myGreatProperty: String!
-            """),
-            Example("""
-            //////////////////////////////////////
-            //
-            // Copyright header.
-            //
-            //////////////////////////////////////
-            """),
-            Example("""
-            /// Look here for more info: https://github.com.
-            var myGreatProperty: String!
-            """),
-            Example("""
-            /// Look here for more info:
-            /// https://github.com.
-            var myGreatProperty: String!
-            """)
-        ],
-        triggeringExamples: [
-            Example("""
-            ↓/// My great property
-            // Not a doc string
-            var myGreatProperty: String!
-            """),
-            Example("""
-            ↓/// Look here for more info: https://github.com.
-            // Not a doc string
-            var myGreatProperty: String!
-            """)
-        ]
+        nonTriggeringExamples: StructuredFunctionDocRuleExamples.nonTriggeringExamples,
+        triggeringExamples: StructuredFunctionDocRuleExamples.triggeringExamples
     )
 
     private static let characterSet = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "/"))
 
     private static let missingParametersHeader = "missing '- Parameters:' markdown header"
+
+    private static let parametersSectionHeader = "- Parameters:"
 
     public func validate(file: SwiftLintFile,
                          kind: SwiftDeclarationKind,
@@ -65,7 +36,7 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
             return []
         }
 
-        let parameterNames = dictionary.substructure.compactMap { subStructure -> String? in
+        var parameterNames = dictionary.substructure.compactMap { subStructure -> String? in
             guard subStructure.declarationKind == .varParameter, let name = subStructure.name else {
                 return nil
             }
@@ -83,7 +54,21 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         }
         let docLines = Array(file.stringView.lines[docLineRange.start - 1 ..< docLineRange.end - 1])
 
-        guard let summary = extractSummary(in: docLines), summary.count <= configuration.maxSummaryLineCount else {
+        let lineContents = docLines.map { $0.content.dropFirst(3) }.joined(separator: "\n")
+        let markdown = MarkdownParser.standard.parse(lineContents)
+
+        guard case .document(let topLevelBlocks) = markdown else {
+          preconditionFailure("markdown block does not represent a document")
+        }
+        check(blocks: topLevelBlocks)
+//        for block in topLevelBlocks {
+//          if case .heading(1, let text) = block {
+//            outline.append(text.rawDescription)
+//          }
+//        }
+
+
+        guard let (summary, body) = split(in: docLines), summary.count <= configuration.maxSummaryLineCount else {
             return [
                 StyleViolation(ruleDescription: Self.description,
                                severity: configuration.severityConfiguration.severity,
@@ -91,17 +76,60 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
             ]
         }
 
+        let parameterLines = removedUpToParameters(lines: body)
+        for line in parameterLines {
+            let parameterName = parameterNames.removeFirst()
+            let lineContent = line.content.trimmingCharacters(in: Self.characterSet)
+            if !lineContent.starts(with: "- \(parameterName):") {
+                return [
+                    StyleViolation(ruleDescription: Self.description,
+                                   severity: configuration.severityConfiguration.severity,
+                                   location: Location(file: file, byteOffset: line.byteRange.location))
+                ]
+            }
+        }
+        if parameterNames.isNotEmpty {
+            return [
+                StyleViolation(ruleDescription: Self.description,
+                               severity: configuration.severityConfiguration.severity,
+                               location: Location(file: file, byteOffset: docLines.last!.byteRange.upperBound - 1))
+            ]
+        }
         return []
     }
 
-    func extractSummary(in lines: [Line]) -> [Line]? {
-        var summary = [Line]()
-        for line in lines {
-            if line.content.trimmingCharacters(in: Self.characterSet).isEmpty {
-                return summary
+    private func split(in lines: [Line]) -> (ArraySlice<Line>, ArraySlice<Line>)? {
+        for (index, line) in lines.enumerated() {
+            let lineContent = line.content.trimmingCharacters(in: Self.characterSet)
+            if lineContent.isEmpty {
+                return (lines.prefix(upTo: index), lines.suffix(from: index + 1))
             }
-            summary.append(line)
+            if lineContent == Self.parametersSectionHeader {
+                return (lines.prefix(upTo: index), lines.suffix(from: index))
+            }
         }
         return nil
+    }
+
+    private func removedUpToParameters(lines: ArraySlice<Line>) -> [Line] {
+        var lines = lines
+        while let first = lines.popFirst() {
+            if first.content.trimmingCharacters(in: Self.characterSet) == Self.parametersSectionHeader {
+                break
+            }
+        }
+        return Array(lines)
+    }
+
+    private func check(blocks: Blocks) {
+      var blocks = blocks
+
+      guard case .paragraph(let summaryText) = blocks.removeFirst() else {
+        return
+      }
+
+      if summaryText.count > 1 {
+        return
+      }
     }
 }
