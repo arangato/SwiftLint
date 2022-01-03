@@ -56,6 +56,6 @@ internal struct StructuredFunctionDocRuleExamples {
         ///   - c: c param.
         ↓///   - d: d param.
         func foo(a: Int, b: Bool, c: String) { }
-        """),
+        """)
     ]
 }
