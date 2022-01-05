@@ -54,13 +54,64 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         }
         let docLines = Array(file.stringView.lines[docLineRange.start - 1 ..< docLineRange.end - 1])
 
-        let lineContents = docLines.map { $0.content.dropFirst(3) }.joined(separator: "\n")
+        let lineContents = docLines.map {
+          $0.content.removingCommonLeadingWhitespaceFromLines().dropFirst(3)
+        }.joined(separator: "\n")
         let markdown = MarkdownParser.standard.parse(lineContents)
 
-        guard case .document(let topLevelBlocks) = markdown else {
-          preconditionFailure("markdown block does not represent a document")
+        guard case .document(var topLevelBlocks) = markdown else {
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: docOffset))
+          ]
         }
-        check(blocks: topLevelBlocks)
+
+        guard case .paragraph(let summaryText) = topLevelBlocks.removeFirst() else {
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: docOffset))
+          ]
+        }
+
+        guard case .list(_, _, let listBlocks) = topLevelBlocks.removeFirst() else {
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: docOffset))
+          ]
+        }
+
+        guard listBlocks.count == parameterNames.count + 1 else {
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: docOffset))
+          ]
+        }
+
+      var parameterParagraphs = [MarkdownKit.Text]()
+      listBlocks.foreach { (block: MarkdownKit.Block) in
+            guard case .listItem(_, _, let listItemBlocks) = block else {
+              return nil
+            }
+            guard case .paragraph(let text) = listItemBlocks.first else {
+              return nil
+            }
+        parameterParagraphs.append(text)
+        }
+
+
+      for (parameterName, listBlock) in zip(["Parameters:"] + parameterNames, listBlocks) {
+        guard case .listItem(_, _, let itemBlocks) = listBlock else {
+          fatalError("zopa")
+        }
+        print(parameterName)
+        print(listBlock)
+      }
+
+      check(blocks: topLevelBlocks)
 //        for block in topLevelBlocks {
 //          if case .heading(1, let text) = block {
 //            outline.append(text.rawDescription)
