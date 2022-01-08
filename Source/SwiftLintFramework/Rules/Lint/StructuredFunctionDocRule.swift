@@ -84,9 +84,22 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
           ]
         }
 
-        var parameterFirstLines = parametersList.children
-            .compactMap { $0 as? Markdown.Paragraph }
+        var parameterFirstLines = Array(parametersList.children)
+        .compactMap { $0.child(at: 0) as? Markdown.Paragraph }
             .compactMap { getLines($0).first }
+      let expectedPrefixes = (["Parameters"] + parameterNames).map { $0 + ":" }
+      for (expectedPrefix, text) in zip(expectedPrefixes, parameterFirstLines) {
+        guard text.string.starts(with: expectedPrefix) else {
+          print("\(expectedPrefix), \(text.string)")
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: docOffset))
+          ]
+        }
+      }
+
+      print(document.debugDescription(options: .printSourceLocations))
         let firstLine = parameterFirstLines.removeFirst()
         guard firstLine.string.starts(with: "Parameters:") else {
           return [
@@ -96,7 +109,6 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
           ]
         }
 
-        print(document.debugDescription(options: .printSourceLocations))
         var visitor = MarkupExtractor()
         visitor.defaultVisit(document)
         let topElements = visitor.visitedElements
