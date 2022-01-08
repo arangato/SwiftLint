@@ -1,5 +1,6 @@
 import Foundation
 import MarkdownKit
+import Markdown
 import SourceKittenFramework
 
 public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProviderRule, AutomaticTestableRule {
@@ -59,6 +60,31 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         }.joined(separator: "\n")
         let markdown = MarkdownParser.standard.parse(lineContents)
 
+        let document = Document(parsing: lineContents)
+        print(document.debugDescription(options: .printSourceLocations))
+        var visitor = MarkupExtractor()
+        visitor.descendInto(document)
+        let topElements = visitor.visitedElements
+        visitor = MarkupExtractor()
+        visitor.descendInto(topElements[0])
+        let summary = visitor.visitedElements
+
+        visitor = MarkupExtractor()
+        visitor.descendInto(topElements[1])
+        let listElements = visitor.visitedElements
+        let texts: [Markup] = listElements.map {
+          visitor = MarkupExtractor()
+          visitor.descendInto($0)
+          guard let p = visitor.visitedElements.first else { return nil }
+          return p
+        }.compactMap { $0 }
+        .map { (m: Markup) in
+          visitor = MarkupExtractor()
+          visitor.descendInto(m)
+          guard let p = visitor.visitedElements.first else { return nil }
+          return p
+        }.compactMap { $0 }
+
         guard case .document(var topLevelBlocks) = markdown else {
           return [
             StyleViolation(ruleDescription: Self.description,
@@ -92,15 +118,15 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         }
 
       var parameterParagraphs = [MarkdownKit.Text]()
-      listBlocks.foreach { (block: MarkdownKit.Block) in
-            guard case .listItem(_, _, let listItemBlocks) = block else {
-              return nil
-            }
-            guard case .paragraph(let text) = listItemBlocks.first else {
-              return nil
-            }
-        parameterParagraphs.append(text)
-        }
+//      listBlocks.foreach { (block: MarkdownKit.Block) in
+//            guard case .listItem(_, _, let listItemBlocks) = block else {
+//              return nil
+//            }
+//            guard case .paragraph(let text) = listItemBlocks.first else {
+//              return nil
+//            }
+//        parameterParagraphs.append(text)
+//        }
 
 
       for (parameterName, listBlock) in zip(["Parameters:"] + parameterNames, listBlocks) {
@@ -183,4 +209,36 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         return
       }
     }
+}
+
+struct MarkupExtractor: MarkupWalker {
+  var visitedElements = [Markup]()
+
+  /// Saves changes to the persistent store if the context has uncommitted changes
+  ///
+  /// - Parameters:
+  /// - parameter lastAPISync: Date data from the API was last synced.
+  /// - throws: An error is thrown if unsaved context changes cannot be committed to the persistent store
+  /// - returns: None
+  /// - parameter lastAPISync2: Date data .
+  ///
+  ///# Notes: #
+  /// 1.  If a lastAPISync Date is provided, the lastAPISync date will be added and saved to the managedObjectContext
+  /// 2.  If there are no unsaved changes and no lastAPISync date is provided, this function does nothing.
+  ///
+  /// - parameter lastAPISync3: Date  .
+  /// # Example #
+  /// ```
+  /// // Save after an API sync
+  /// let lastAPISync = Date()
+  /// save(lastAPISync: lastAPISync)
+  /// // Save local changes
+  /// save(lastAPISync: nil)
+  /// ```
+  public mutating func defaultVisit(_ markup: Markup) {
+    visitedElements.append(markup)
+    if let range = markup.range {
+      print(range)
+    }
+  }
 }
