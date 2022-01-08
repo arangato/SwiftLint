@@ -18,12 +18,6 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         triggeringExamples: StructuredFunctionDocRuleExamples.triggeringExamples
     )
 
-    private static let characterSet = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "/"))
-
-    private static let missingParametersHeader = "missing '- Parameters:' markdown header"
-
-    private static let parametersSectionHeader = "- Parameters:"
-
     public func validate(file: SwiftLintFile,
                          kind: SwiftDeclarationKind,
                          dictionary: SourceKittenDictionary) -> [StyleViolation] {
@@ -35,7 +29,7 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
             return []
         }
 
-        var parameterNames = dictionary.substructure.compactMap { subStructure -> String? in
+        let parameterNames = dictionary.substructure.compactMap { subStructure -> String? in
             guard subStructure.declarationKind == .varParameter, let name = subStructure.name else {
                 return nil
             }
@@ -57,206 +51,53 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
           $0.content.removingCommonLeadingWhitespaceFromLines().dropFirst(3)
         }.joined(separator: "\n")
 
+        let violation = { (offset: ByteCount) -> [StyleViolation] in
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: offset))
+          ]
+        }
         let document = Document(parsing: lineContents)
         let markupChildren = Array(document.children)
         guard let summaryParagraph = markupChildren.first as? Markdown.Paragraph else {
-          return [
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severityConfiguration.severity,
-                           location: Location(file: file, byteOffset: docOffset))
-          ]
+          return violation(docOffset)
         }
 
         if configuration.maxSummaryLineCount > 0 &&
-            getLines(summaryParagraph).count > configuration.maxSummaryLineCount {
-          return [
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severityConfiguration.severity,
-                           location: Location(file: file, byteOffset: docOffset))
-          ]
+            summaryParagraph.textLines.count > configuration.maxSummaryLineCount {
+            return violation(docOffset)
         }
 
         guard let parametersList = markupChildren.compactMap({ $0 as? Markdown.UnorderedList }).first else {
-          return [
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severityConfiguration.severity,
-                           location: Location(file: file, byteOffset: docOffset))
-          ]
+          return violation(docOffset)
         }
 
-        var parameterFirstLines = Array(parametersList.children)
-        .compactMap { $0.child(at: 0) as? Markdown.Paragraph }
-            .compactMap { getLines($0).first }
-      let expectedPrefixes = (["Parameters"] + parameterNames).map { $0 + ":" }
-      for (expectedPrefix, text) in zip(expectedPrefixes, parameterFirstLines) {
-        guard text.string.starts(with: expectedPrefix) else {
-          print("\(expectedPrefix), \(text.string)")
-          return [
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severityConfiguration.severity,
-                           location: Location(file: file, byteOffset: docOffset))
-          ]
-        }
-      }
-
-      print(document.debugDescription(options: .printSourceLocations))
-        let firstLine = parameterFirstLines.removeFirst()
-        guard firstLine.string.starts(with: "Parameters:") else {
-          return [
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severityConfiguration.severity,
-                           location: Location(file: file, byteOffset: docOffset))
-          ]
+        let parameterFirstLines = Array(parametersList.children)
+            .compactMap { $0.child(at: 0) as? Markdown.Paragraph }
+            .compactMap { $0.textLines.first }
+        let expectedPrefixes = (["Parameters"] + parameterNames).map { $0 + ":" }
+        guard expectedPrefixes.count == parameterFirstLines.count else {
+            return violation(docOffset)
         }
 
-        var visitor = MarkupExtractor()
-        visitor.defaultVisit(document)
-        let topElements = visitor.visitedElements
-        visitor = MarkupExtractor()
-        visitor.descendInto(topElements[0])
-        let summary = visitor.visitedElements
-
-        visitor = MarkupExtractor()
-        visitor.descendInto(topElements[1])
-        let listElements = visitor.visitedElements
-        let texts: [Markup] = listElements.map {
-          visitor = MarkupExtractor()
-          visitor.descendInto($0)
-          guard let p = visitor.visitedElements.first else { return nil }
-          return p
-        }.compactMap { $0 }
-        .map { (m: Markup) in
-          visitor = MarkupExtractor()
-          visitor.descendInto(m)
-          guard let p = visitor.visitedElements.first else { return nil }
-          return p
-        }.compactMap { $0 }
-
-
-        guard let (summary, body) = split(in: docLines), summary.count <= configuration.maxSummaryLineCount else {
-            return [
-                StyleViolation(ruleDescription: Self.description,
-                               severity: configuration.severityConfiguration.severity,
-                               location: Location(file: file, byteOffset: docOffset))
-            ]
-        }
-
-        let parameterLines = removedUpToParameters(lines: body)
-        for line in parameterLines {
-            let parameterName = parameterNames.removeFirst()
-            let lineContent = line.content.trimmingCharacters(in: Self.characterSet)
-            if !lineContent.starts(with: "- \(parameterName):") {
-                return [
-                    StyleViolation(ruleDescription: Self.description,
-                                   severity: configuration.severityConfiguration.severity,
-                                   location: Location(file: file, byteOffset: line.byteRange.location))
-                ]
+        for (expectedPrefix, text) in zip(expectedPrefixes, parameterFirstLines) {
+            guard text.string.starts(with: expectedPrefix) else {
+                guard let lineIndex = text.range?.lowerBound.line else {
+                  return violation(docOffset)
+                }
+                let lineOffset = docLines[lineIndex - 1].byteRange.location
+                return violation(lineOffset)
             }
         }
-        if parameterNames.isNotEmpty {
-            return [
-                StyleViolation(ruleDescription: Self.description,
-                               severity: configuration.severityConfiguration.severity,
-                               location: Location(file: file, byteOffset: docLines.last!.byteRange.upperBound - 1))
-            ]
-        }
+
+//        print(document.debugDescription(options: .printSourceLocations))
         return []
     }
-
-    private func split(in lines: [Line]) -> (ArraySlice<Line>, ArraySlice<Line>)? {
-        for (index, line) in lines.enumerated() {
-            let lineContent = line.content.trimmingCharacters(in: Self.characterSet)
-            if lineContent.isEmpty {
-                return (lines.prefix(upTo: index), lines.suffix(from: index + 1))
-            }
-            if lineContent == Self.parametersSectionHeader {
-                return (lines.prefix(upTo: index), lines.suffix(from: index))
-            }
-        }
-        return nil
-    }
-
-    private func removedUpToParameters(lines: ArraySlice<Line>) -> [Line] {
-        var lines = lines
-        while let first = lines.popFirst() {
-            if first.content.trimmingCharacters(in: Self.characterSet) == Self.parametersSectionHeader {
-                break
-            }
-        }
-        return Array(lines)
-    }
-
 }
 
-enum MarkupElement {
-  case paragraph
-  case unorderedList
-}
-//struct MarkupNode {
-//  var markup: Markup
-//  var elements: []
-//}
-//func parse(document: Markup) {
-//  for child in document.children {
-//    if let paragraph = child as? Paragraph {
-//      parse(paragraph)
-//    } else if let unorderedList = child as? UnorderedList {
-//      parse(unorderedList)
-//    }
-//  }
-//}
-
-func getLines(_ paragraph: Paragraph) -> [Markdown.Text] {
-  paragraph.children.compactMap { $0 as? Markdown.Text }
-}
-func getParagraphs(_ unorderedList: UnorderedList) {
-  for e in unorderedList.children {
-//    if let paragraph = e as? Paragraph {
-//      parse(paragraph)
-//    } else if let unorderedList = e as? UnorderedList {
-//      parse(unorderedList)
-//    }
-  }
-}
-
-struct MarkupExtractor: MarkupWalker {
-  var visitedElements = [Markup]()
-  /// Saves changes to the persistent store if the context has uncommitted changes
-  ///
-  /// - Parameters:
-  /// - parameter lastAPISync: Date data from the API was last synced.
-  /// - throws: An error is thrown if unsaved context changes cannot be committed to the persistent store
-  /// - returns: None
-  /// - parameter lastAPISync2: Date data .
-  ///
-  ///# Notes: #
-  /// 1.  If a lastAPISync Date is provided, the lastAPISync date will be added and saved to the managedObjectContext
-  /// 2.  If there are no unsaved changes and no lastAPISync date is provided, this function does nothing.
-  ///
-  /// - parameter lastAPISync3: Date  .
-  /// # Example #
-  /// ```
-  /// // Save after an API sync
-  /// let lastAPISync = Date()
-  /// save(lastAPISync: lastAPISync)
-  /// // Save local changes
-  /// save(lastAPISync: nil)
-  /// ```
-  public mutating func defaultVisit(_ markup: Markup) {
-    visitedElements.append(markup)
-    if let range = markup.range {
-      print(range)
+private extension Paragraph {
+    var textLines: [Markdown.Text] {
+        children.compactMap { $0 as? Markdown.Text }
     }
-  }
-
-  mutating func visitUnorderedList(_ unorderedList: UnorderedList) {
-    descendInto(unorderedList)
-  }
-
-  mutating func visitParagraph(_ paragraph: Paragraph) {
-    print(paragraph.debugDescription())
-    for e in paragraph.children {
-      print(type(of: e))
-    }
-  }
 }
