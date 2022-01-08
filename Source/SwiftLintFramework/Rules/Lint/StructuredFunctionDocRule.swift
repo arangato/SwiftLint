@@ -1,5 +1,4 @@
 import Foundation
-import MarkdownKit
 import Markdown
 import SourceKittenFramework
 
@@ -12,8 +11,7 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         identifier: "structured_function_doc",
         name: "Structured Function Doc",
         description:
-            "Function documentation should have 1 line of summary, followed by an empty line and " +
-        "detailing all parameters using markdown.",
+            "Function documentation should have a short summary followed by parameters section.",
         kind: .lint,
         minSwiftVersion: .fourDotOne,
         nonTriggeringExamples: StructuredFunctionDocRuleExamples.nonTriggeringExamples,
@@ -58,12 +56,49 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         let lineContents = docLines.map {
           $0.content.removingCommonLeadingWhitespaceFromLines().dropFirst(3)
         }.joined(separator: "\n")
-        let markdown = MarkdownParser.standard.parse(lineContents)
 
         let document = Document(parsing: lineContents)
+        let markupChildren = Array(document.children)
+        guard let summaryParagraph = markupChildren.first as? Markdown.Paragraph else {
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: docOffset))
+          ]
+        }
+
+        if configuration.maxSummaryLineCount > 0 &&
+            getLines(summaryParagraph).count > configuration.maxSummaryLineCount {
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: docOffset))
+          ]
+        }
+
+        guard let parametersList = markupChildren.compactMap({ $0 as? Markdown.UnorderedList }).first else {
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: docOffset))
+          ]
+        }
+
+        var parameterFirstLines = parametersList.children
+            .compactMap { $0 as? Markdown.Paragraph }
+            .compactMap { getLines($0).first }
+        let firstLine = parameterFirstLines.removeFirst()
+        guard firstLine.string.starts(with: "Parameters:") else {
+          return [
+            StyleViolation(ruleDescription: Self.description,
+                           severity: configuration.severityConfiguration.severity,
+                           location: Location(file: file, byteOffset: docOffset))
+          ]
+        }
+
         print(document.debugDescription(options: .printSourceLocations))
         var visitor = MarkupExtractor()
-        visitor.descendInto(document)
+        visitor.defaultVisit(document)
         let topElements = visitor.visitedElements
         visitor = MarkupExtractor()
         visitor.descendInto(topElements[0])
@@ -84,65 +119,6 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
           guard let p = visitor.visitedElements.first else { return nil }
           return p
         }.compactMap { $0 }
-
-        guard case .document(var topLevelBlocks) = markdown else {
-          return [
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severityConfiguration.severity,
-                           location: Location(file: file, byteOffset: docOffset))
-          ]
-        }
-
-        guard case .paragraph(let summaryText) = topLevelBlocks.removeFirst() else {
-          return [
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severityConfiguration.severity,
-                           location: Location(file: file, byteOffset: docOffset))
-          ]
-        }
-
-        guard case .list(_, _, let listBlocks) = topLevelBlocks.removeFirst() else {
-          return [
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severityConfiguration.severity,
-                           location: Location(file: file, byteOffset: docOffset))
-          ]
-        }
-
-        guard listBlocks.count == parameterNames.count + 1 else {
-          return [
-            StyleViolation(ruleDescription: Self.description,
-                           severity: configuration.severityConfiguration.severity,
-                           location: Location(file: file, byteOffset: docOffset))
-          ]
-        }
-
-      var parameterParagraphs = [MarkdownKit.Text]()
-//      listBlocks.foreach { (block: MarkdownKit.Block) in
-//            guard case .listItem(_, _, let listItemBlocks) = block else {
-//              return nil
-//            }
-//            guard case .paragraph(let text) = listItemBlocks.first else {
-//              return nil
-//            }
-//        parameterParagraphs.append(text)
-//        }
-
-
-      for (parameterName, listBlock) in zip(["Parameters:"] + parameterNames, listBlocks) {
-        guard case .listItem(_, _, let itemBlocks) = listBlock else {
-          fatalError("zopa")
-        }
-        print(parameterName)
-        print(listBlock)
-      }
-
-      check(blocks: topLevelBlocks)
-//        for block in topLevelBlocks {
-//          if case .heading(1, let text) = block {
-//            outline.append(text.rawDescription)
-//          }
-//        }
 
 
         guard let (summary, body) = split(in: docLines), summary.count <= configuration.maxSummaryLineCount else {
@@ -198,22 +174,41 @@ public struct StructuredFunctionDocRule: ASTRule, OptInRule, ConfigurationProvid
         return Array(lines)
     }
 
-    private func check(blocks: Blocks) {
-      var blocks = blocks
+}
 
-      guard case .paragraph(let summaryText) = blocks.removeFirst() else {
-        return
-      }
+enum MarkupElement {
+  case paragraph
+  case unorderedList
+}
+//struct MarkupNode {
+//  var markup: Markup
+//  var elements: []
+//}
+//func parse(document: Markup) {
+//  for child in document.children {
+//    if let paragraph = child as? Paragraph {
+//      parse(paragraph)
+//    } else if let unorderedList = child as? UnorderedList {
+//      parse(unorderedList)
+//    }
+//  }
+//}
 
-      if summaryText.count > 1 {
-        return
-      }
-    }
+func getLines(_ paragraph: Paragraph) -> [Markdown.Text] {
+  paragraph.children.compactMap { $0 as? Markdown.Text }
+}
+func getParagraphs(_ unorderedList: UnorderedList) {
+  for e in unorderedList.children {
+//    if let paragraph = e as? Paragraph {
+//      parse(paragraph)
+//    } else if let unorderedList = e as? UnorderedList {
+//      parse(unorderedList)
+//    }
+  }
 }
 
 struct MarkupExtractor: MarkupWalker {
   var visitedElements = [Markup]()
-
   /// Saves changes to the persistent store if the context has uncommitted changes
   ///
   /// - Parameters:
@@ -239,6 +234,17 @@ struct MarkupExtractor: MarkupWalker {
     visitedElements.append(markup)
     if let range = markup.range {
       print(range)
+    }
+  }
+
+  mutating func visitUnorderedList(_ unorderedList: UnorderedList) {
+    descendInto(unorderedList)
+  }
+
+  mutating func visitParagraph(_ paragraph: Paragraph) {
+    print(paragraph.debugDescription())
+    for e in paragraph.children {
+      print(type(of: e))
     }
   }
 }
